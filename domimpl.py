@@ -32,10 +32,14 @@ def winloss(resmat):
     losses  = resmat.sum(axis=0)
     pcts    = wins / (wins + losses)
 
-    #TODO doesn't support tiebreakers
-    return pd.DataFrame(data={'name': resmat.index, 'win': wins, 'loss': losses, 'pct': pcts})\
-        .sort_values('pct', ascending=False)\
-        .drop('pct', axis=1)\
+    if (wins.size > 2):
+        htoh = pd.concat([winloss(resmat.loc[pcts == pct, pcts == pct])['win'] for pct in pcts.unique()])
+    else:
+        htoh = wins
+
+    return pd.DataFrame(data={'name': resmat.index, 'win': wins, 'loss': losses, 'pct': pcts, 'neg_losses': -1*losses, 'htoh': htoh})\
+        .sort_values(['pct', 'win', 'neg_losses', 'htoh'], ascending=False)\
+        .drop(['pct', 'neg_losses', 'htoh'], axis=1)\
         .set_index('name')
 
 # Return a results matrix where the given player wins every remaining game
@@ -62,9 +66,8 @@ def demoting(resmat, ngames=6, nplayers=1):
     # if a player could win all of their games and still demote, they've guaranteed demotion
     return [p for p in resmat.index if p in winloss(scenario_player_wins_out(resmat, p, ngames)).tail(nplayers).index]
 
-# Generically, determine the players who, in some scenario, promote (or demote)
-def possible(func, resmat, ngames=6, nplayers=1):
-    players = func(resmat, ngames, nplayers)
+def could_promote(resmat, ngames=6, nplayers=1):
+    players = promoting(resmat, ngames, nplayers)
     if len(players) >= nplayers:
         return players
 
@@ -75,13 +78,25 @@ def possible(func, resmat, ngames=6, nplayers=1):
                 spec_resmat = resmat.copy()
                 spec_resmat.loc[player, opponent] += halfwins / 2
                 spec_resmat.loc[opponent, player] += remaining_games - halfwins / 2
-                players.extend(func(spec_resmat, ngames, nplayers))
+                players.extend(promoting(spec_resmat, ngames, nplayers))
 
     return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
-# Two specializations of possible(), one each for promotion and demotion
-could_promote = functools.partial(possible, promoting)
-could_demote  = functools.partial(possible, demoting)
+def could_demote(resmat, ngames=6, nplayers=1):
+    players = demoting(resmat, ngames, nplayers)
+    if len(players) >= nplayers:
+        return players
+
+    #FIXME until I find a better way, we use the O(n!) algorithm
+    for player in resmat.index:
+        for opponent, remaining_games in find_player_unfinished(resmat, player, ngames).items():
+            for halfwins in range(int(2*(ngames - remaining_games)), 2*ngames+1):
+                spec_resmat = resmat.copy()
+                spec_resmat.loc[player, opponent] += halfwins / 2
+                spec_resmat.loc[opponent, player] += remaining_games - halfwins / 2
+                players.extend(demoting(spec_resmat, ngames, nplayers))
+
+    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
 with open(sys.argv[1]) as rfp:
     mat = matrix_from_results(rfp)
