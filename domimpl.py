@@ -42,19 +42,23 @@ def winloss(resmat):
         .drop(['pct', 'neg_losses', 'htoh'], axis=1)\
         .set_index('name')
 
+def set_record(resmat, playerA, playerB, winsA, winsB):
+    resmat.loc[playerA, playerB] = winsA
+    resmat.loc[playerB, playerA] = winsB
+    return resmat
+
+def add_record(resmat, playerA, playerB, winsA, winsB):
+    return set_record(resmat, playerA, playerB, resmat.loc[playerA, playerB] + winsA, resmat.loc[playerB, playerA] + winsB)
+
 # Return a results matrix where the given player wins every remaining game
 def scenario_player_wins_out(resmat, player, ngames=6):
     unf = find_player_unfinished(resmat, player, ngames)
-    spec_resmat = resmat.copy()
-    spec_resmat.loc[player, unf.index] += unf
-    return spec_resmat;
+    return add_record(resmat.copy(), player, unf.index, unf, 0)
 
 # Return a results matrix where the given player loses every remaining game
 def scenario_player_loses_out(resmat, player, ngames=6):
     unf = find_player_unfinished(resmat, player, ngames)
-    spec_resmat = resmat.copy()
-    spec_resmat.loc[unf.index, player] += unf
-    return spec_resmat;
+    return add_record(resmat.copy(), player, unf.index, 0, unf)
 
 # Return a list of all players who have guaranteed promotion
 def promoting(resmat, ngames=6, nplayers=1):
@@ -67,18 +71,18 @@ def demoting(resmat, ngames=6, nplayers=1):
     return [p for p in resmat.index if p in winloss(scenario_player_wins_out(resmat, p, ngames)).tail(nplayers).index]
 
 def could_promote(resmat, ngames=6, nplayers=1):
-    players = promoting(resmat, ngames, nplayers)
+    players = promoting(resmat.copy(), ngames, nplayers)
     if len(players) >= nplayers:
         return players
 
     #FIXME until I find a better way, we use the O(n!) algorithm
     for player in resmat.index:
-        for opponent, remaining_games in find_player_unfinished(resmat, player, ngames).items():
-            for halfwins in range(int(2*(ngames - remaining_games)), 2*ngames+1):
-                spec_resmat = resmat.copy()
-                spec_resmat.loc[player, opponent] += halfwins / 2
-                spec_resmat.loc[opponent, player] += remaining_games - halfwins / 2
-                players.extend(promoting(spec_resmat, ngames, nplayers))
+        for opponent, games in find_player_unfinished(resmat, player, ngames).items():
+            players.extend(
+                itertools.chain.from_iterable(
+                    promoting(add_record(resmat.copy(), player, opponent, halfwins/2, games-halfwins/2)) for halfwins in range(int(2*(ngames - games)), 2*ngames+1)
+                )
+            )
 
     return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
@@ -89,12 +93,12 @@ def could_demote(resmat, ngames=6, nplayers=1):
 
     #FIXME until I find a better way, we use the O(n!) algorithm
     for player in resmat.index:
-        for opponent, remaining_games in find_player_unfinished(resmat, player, ngames).items():
-            for halfwins in range(int(2*(ngames - remaining_games)), 2*ngames+1):
-                spec_resmat = resmat.copy()
-                spec_resmat.loc[player, opponent] += halfwins / 2
-                spec_resmat.loc[opponent, player] += remaining_games - halfwins / 2
-                players.extend(demoting(spec_resmat, ngames, nplayers))
+        for opponent, games in find_player_unfinished(resmat, player, ngames).items():
+            players.extend(
+                itertools.chain.from_iterable(
+                    demoting(add_record(resmat.copy(), player, opponent, halfwins/2, games-halfwins/2)) for halfwins in range(int(2*(ngames-games)+1))
+                )
+            )
 
     return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
