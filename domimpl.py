@@ -43,72 +43,94 @@ def winloss(resmat):
         .set_index('name')
 
 def set_record(resmat, playerA, playerB, winsA, winsB):
-    resmat.loc[playerA, playerB] = winsA
-    resmat.loc[playerB, playerA] = winsB
-    return resmat
+    newval = pd.DataFrame(0, index=resmat.index, columns=resmat.columns)
+    newval.loc[playerA, playerB] = winsA
+    newval.loc[playerB, playerA] = winsB
+    retmask = pd.DataFrame(False, index=resmat.index, columns=resmat.columns, dtype=bool)
+    retmask.loc[playerA, playerB] = True
+    retmask.loc[playerB, playerA] = True
+    return resmat[~retmask] + newval[retmask]
 
 def add_record(resmat, playerA, playerB, winsA, winsB):
-    return set_record(resmat, playerA, playerB, resmat.loc[playerA, playerB] + winsA, resmat.loc[playerB, playerA] + winsB)
+    retval = pd.DataFrame(0, index=resmat.index, columns=resmat.columns)
+    retval.loc[playerA, playerB] = winsA
+    retval.loc[playerB, playerA] = winsB
+    return resmat + retval
 
 # Return a results matrix where the given player wins every remaining game
 def scenario_player_wins_out(resmat, player, ngames=6):
     unf = find_player_unfinished(resmat, player, ngames)
-    return add_record(resmat.copy(), player, unf.index, unf, 0)
+    return add_record(resmat, player, unf.index, unf, 0)
 
 # Return a results matrix where the given player loses every remaining game
 def scenario_player_loses_out(resmat, player, ngames=6):
     unf = find_player_unfinished(resmat, player, ngames)
-    return add_record(resmat.copy(), player, unf.index, 0, unf)
+    return add_record(resmat, player, unf.index, 0, unf)
 
 # Return a list of all players who have guaranteed promotion
 def promoting(resmat, ngames=6, nplayers=1):
     # If a player could lose all of their games and still promote, they've guaranteed promotion
-    return [p for p in resmat.index if p in winloss(scenario_player_loses_out(resmat, p, ngames)).head(nplayers).index]
+    return [ p for p in resmat.index if p in winloss(scenario_player_loses_out(resmat, p, ngames)).head(nplayers).index ]
 
 # Return a list of all players who have guaranteed demotion
 def demoting(resmat, ngames=6, nplayers=1):
     # if a player could win all of their games and still demote, they've guaranteed demotion
-    return [p for p in resmat.index if p in winloss(scenario_player_wins_out(resmat, p, ngames)).tail(nplayers).index]
+    return [ p for p in resmat.index if p in winloss(scenario_player_wins_out(resmat, p, ngames)).tail(nplayers).index ]
 
-def could_promote(resmat, ngames=6, nplayers=1):
-    players = promoting(resmat.copy(), ngames, nplayers)
+def uniq_join(*iterables):
+    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(itertools.chain(*iterables))))))
+
+def could_promote(resmat, ngames=6, nplayers=1, recur=[]):
+    # If no matches will increase the number of demoters, take the shortcut
+    players = promoting(resmat, ngames, nplayers)
     if len(players) >= nplayers:
-        return players
+        return uniq_join(recur, players)
 
-    #FIXME until I find a better way, we use the O(n!) algorithm
-    for player in resmat.index:
-        for opponent, games in find_player_unfinished(resmat, player, ngames).items():
-            players.extend(
-                itertools.chain.from_iterable(
-                    promoting(add_record(resmat.copy(), player, opponent, halfwins/2, games-halfwins/2)) for halfwins in range(int(2*(ngames - games)), 2*ngames+1)
-                )
-            )
+    # Resolve one match at a time, recursively
+    p_iter = iter(resmat.index)
+    player = next(p_iter)
+    unf = find_player_unfinished(resmat, player, ngames)
+    while unf.empty:
+        player = next(p_iter)
+        unf = find_player_unfinished(resmat, player, ngames)
 
-    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
+    opponent = unf.index[0]
+    return uniq_join(*(could_promote(add_record(resmat, player, opponent, halfwins/2, unf[opponent]-halfwins/2), ngames, nplayers, recur) for halfwins in range(int(2*unf[opponent]+1))))
 
-def could_demote(resmat, ngames=6, nplayers=1):
+def could_demote(resmat, ngames=6, nplayers=1, recur=[]):
+    # If no matches will increase the number of demoters, take the shortcut
     players = demoting(resmat, ngames, nplayers)
     if len(players) >= nplayers:
-        return players
+        return uniq_join(recur, players)
 
-    #FIXME until I find a better way, we use the O(n!) algorithm
-    for player in resmat.index:
-        for opponent, games in find_player_unfinished(resmat, player, ngames).items():
-            players.extend(
-                itertools.chain.from_iterable(
-                    demoting(add_record(resmat.copy(), player, opponent, halfwins/2, games-halfwins/2)) for halfwins in range(int(2*(ngames-games)+1))
-                )
-            )
+    # Resolve one match at a time, recursively
+    p_iter = iter(resmat.index)
+    player = next(p_iter)
+    unf = find_player_unfinished(resmat, player, ngames)
+    while unf.empty:
+        player = next(p_iter)
+        unf = find_player_unfinished(resmat, player, ngames)
 
-    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
+    opponent = unf.index[0]
+    return uniq_join(*(could_demote(add_record(resmat, player, opponent, halfwins/2, unf[opponent]-halfwins/2), ngames, nplayers, recur) for halfwins in range(int(2*unf[opponent]+1))))
+
+def match_impl(resmat, playerA, playerB, ngames=6, nplayers=1):
+    unf = find_player_unfinished(resmat, playerA)
+    remaining = unf[playerB] if playerB in unf.index else 0
+
+    for halfwins in range(int(2*remaining+1)):
+        spec_resmat = add_record(resmat, playerA, playerB, halfwins/2, remaining - halfwins/2)
+        print(repr(playerA), spec_resmat.loc[playerA, playerB], spec_resmat.loc[playerB, playerA], repr(playerB), could_demote(spec_resmat, ngames, nplayers))
 
 with open(sys.argv[1]) as rfp:
     mat = matrix_from_results(rfp)
 
 print(mat)
 print(winloss(mat))
-print(promoting(mat))
-print(demoting(mat, nplayers=2))
-print(could_promote(mat, nplayers=1))
-print(could_demote(mat, nplayers=2))
+#print(promoting(mat))
+#print(demoting(mat, nplayers=2))
+#print(could_promote(mat, nplayers=1))
+#print(could_demote(mat, nplayers=2))
+
+match_impl(mat, 'aku chi', 'recycle_garbage', nplayers=2)
 
