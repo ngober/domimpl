@@ -21,21 +21,24 @@ def matrix_from_results(results, players=None):
 
     return pd.DataFrame.from_records(matrix).fillna(0.).sort_index(axis=0).sort_index(axis=1)
 
+def find_unfinished(resmat, ngames=6):
+    remaining = ngames*np.triu(np.ones(resmat.shape), 1) - resmat - resmat.T
+    return remaining[remaining > 0].stack()
+
 # Find all unfinished matches for a given player.
 def find_player_unfinished(resmat, player, ngames=6):
-    remaining = ngames - ngames*np.eye(len(resmat.index)) - resmat - resmat.T
-    return remaining.loc[player, remaining[player] > 0]
+    unf = find_unfinished(resmat, ngames)
+    unfA = unf.loc[player] if player in unf.index else pd.Series(dtype=int)
+    unf = unf.swaplevel()
+    unfB = unf.loc[player] if player in unf.index else pd.Series(dtype=int)
+    return pd.concat((unfA, unfB))
 
 # Accumulate the win-loss statistics given a results matrix
 def winloss(resmat):
     wins    = resmat.sum(axis=1)
     losses  = resmat.sum(axis=0)
     pcts    = wins / (wins + losses)
-
-    if (wins.size > 2):
-        htoh = pd.concat([winloss(resmat.loc[pcts == pct, pcts == pct])['win'] for pct in pcts.unique()])
-    else:
-        htoh = wins
+    htoh    = pd.concat([winloss(resmat.loc[pcts == pct, pcts == pct])['win'] for pct in pcts.unique() if pct > 0]) if wins.size > 2 else wins
 
     return pd.DataFrame(data={'name': resmat.index, 'win': wins, 'loss': losses, 'pct': pcts, 'neg_losses': -1*losses, 'htoh': htoh})\
         .sort_values(['pct', 'win', 'neg_losses', 'htoh'], ascending=False)\
@@ -77,39 +80,30 @@ def demoting(resmat, ngames=6, nplayers=1):
     # if a player could win all of their games and still demote, they've guaranteed demotion
     return [ p for p in resmat.index if p in winloss(scenario_player_wins_out(resmat, p, ngames)).tail(nplayers).index ]
 
-def uniq_join(*iterables):
-    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(itertools.chain(*iterables))))))
+def could_promote(resmat, ngames=6, nplayers=1):
+    # Resolve one match at a time, iteratively
+    unchecked = collections.deque([resmat])
+    players = []
 
-def could_promote(resmat, ngames=6, nplayers=1, recur=[]):
-    # If no matches will increase the number of demoters, take the shortcut
-    players = promoting(resmat, ngames, nplayers)
-    if len(players) >= nplayers:
-        return uniq_join(recur, players)
+    unf = find_unfinished(resmat, ngames).items()
 
-    # Resolve one match at a time, recursively
-    p_iter = iter(resmat.index)
-    player = next(p_iter)
-    unf = find_player_unfinished(resmat, player, ngames)
-    while unf.empty:
-        player = next(p_iter)
-        unf = find_player_unfinished(resmat, player, ngames)
+    while len(unchecked) > 0:
+        check = unchecked.pop()
+        promo = promoting(check, ngames, nplayers)
+        players.extend(p for p in promo if p not in players)
 
-    opponent = unf.index[0]
-    return uniq_join(*(could_promote(add_record(resmat, player, opponent, halfwins/2, unf[opponent]-halfwins/2), ngames, nplayers, recur) for halfwins in range(int(2*unf[opponent]+1))))
+        # If not all players are known already, check each possible result of the match
+        if len(promo) < nplayers:
+            for p, r in unf:
+                scenarios = [add_record(check, *p, hw/2, r-hw/2) for hw in range(int(2*r+1))]
 
-def could_demote(resmat, ngames=6, nplayers=1, recur=[]):
-    # If no matches will increase the number of demoters, take the shortcut
-    players = demoting(resmat, ngames, nplayers)
-    if len(players) >= nplayers:
-        return uniq_join(recur, players)
+                # skip searching further if this match doesn't change outcomes
+                g = itertools.groupby(promoting(s, ngames, nplayers) for s in scenarios)
+                if next(g, True) and not next(g, False):
+                    unchecked.extend(scenarios)
+                    break
 
-    # Resolve one match at a time, recursively
-    p_iter = iter(resmat.index)
-    player = next(p_iter)
-    unf = find_player_unfinished(resmat, player, ngames)
-    while unf.empty:
-        player = next(p_iter)
-        unf = find_player_unfinished(resmat, player, ngames)
+    return players
 
     opponent = unf.index[0]
     return uniq_join(*(could_demote(add_record(resmat, player, opponent, halfwins/2, unf[opponent]-halfwins/2), ngames, nplayers, recur) for halfwins in range(int(2*unf[opponent]+1))))
