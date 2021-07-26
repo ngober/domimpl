@@ -6,6 +6,7 @@ import functools
 import operator
 import numpy as np
 import pandas as pd
+from PIL import Image, ImageDraw
 
 def matrix_from_results(results, players=None):
     if players is not None:
@@ -105,16 +106,70 @@ def could_promote(resmat, ngames=6, nplayers=1):
 
     return players
 
-    opponent = unf.index[0]
-    return uniq_join(*(could_demote(add_record(resmat, player, opponent, halfwins/2, unf[opponent]-halfwins/2), ngames, nplayers, recur) for halfwins in range(int(2*unf[opponent]+1))))
+def could_demote(resmat, ngames=6, nplayers=1):
+    # Resolve one match at a time, iteratively
+    unchecked = collections.deque([resmat])
+    players = []
+
+    unf = find_unfinished(resmat, ngames).items()
+
+    while len(unchecked) > 0:
+        check = unchecked.pop()
+        demo = demoting(check, ngames, nplayers)
+        players.extend(d for d in demo if d not in players)
+
+        # If not all players are known already, check each possible result of the match
+        if len(demo) < nplayers:
+            for p, r in unf:
+                scenarios = [add_record(check, *p, hw/2, r-hw/2) for hw in range(int(2*r+1))]
+
+                # skip searching further if this match doesn't change outcomes
+                g = itertools.groupby(demoting(s, ngames, nplayers) for s in scenarios)
+                if next(g, True) and not next(g, False):
+                    unchecked.extend(scenarios)
+                    break
+
+    return players
 
 def match_impl(resmat, playerA, playerB, ngames=6, nplayers=1):
+    im = Image.new("RGB", (512,256), color='white')
+    draw = ImageDraw.Draw(im)
+    tablepos = (20,40)
+    tablesize = (470,200)
+    impl_colors = ['red', 'green', 'blue']
+
     unf = find_player_unfinished(resmat, playerA)
     remaining = unf[playerB] if playerB in unf.index else 0
 
+    tablestep = int(tablesize[1]/(2*remaining+1))
+
+    # Gather data about the implications of scenarios
+    resultrows = []
+    last_demoters = set()
+    iter_colors = iter(impl_colors)
     for halfwins in range(int(2*remaining+1)):
         spec_resmat = add_record(resmat, playerA, playerB, halfwins/2, remaining - halfwins/2)
-        print(repr(playerA), spec_resmat.loc[playerA, playerB], spec_resmat.loc[playerB, playerA], repr(playerB), could_demote(spec_resmat, ngames, nplayers))
+        winsA = repr(spec_resmat.loc[playerA, playerB])
+        winsB = repr(spec_resmat.loc[playerB, playerA])
+        demoters = could_demote(spec_resmat, ngames, nplayers)
+        if set(demoters) != last_demoters:
+            color = next(iter_colors)
+            last_demoters = set(demoters)
+        resultrows.append((winsA, winsB, repr(demoters), color))
+
+    # Create image
+    draw.text((200,10), f'{playerA} vs. {playerB}', fill=0, anchor='mt')
+    for row,ypos in zip(resultrows, itertools.count(tablepos[1], tablestep)):
+        draw.line((tablepos[0], ypos, tablepos[0]+tablesize[0], ypos), fill=0)
+        draw.text((tablepos[0]+2, ypos+2), playerA, fill=0)
+        draw.text((tablepos[0]+60, ypos+2), row[0], fill=0)
+        draw.text((tablepos[0]+90, ypos+2), row[1], fill=0)
+        draw.text((tablepos[0]+120, ypos+2), playerB, fill=0)
+        draw.rectangle((tablepos[0]+215, ypos+1, tablepos[0]+tablesize[0], ypos+tablestep-1), fill = row[3])
+        draw.text((tablepos[0]+220, ypos+2), row[2], fill=0)
+    draw.line((tablepos[0], tablepos[1]+(tablestep*len(resultrows)), tablepos[0]+tablesize[0], tablepos[1]+(tablestep*len(resultrows))), fill=0)
+
+    im.show()
 
 with open(sys.argv[1]) as rfp:
     mat = matrix_from_results(rfp)
