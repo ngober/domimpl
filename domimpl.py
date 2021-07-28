@@ -1,26 +1,12 @@
-import sys
-import re
 import collections
 import itertools
 import functools
 import operator
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw
 
-def matrix_from_results(results, players=None):
-    if players is not None:
-        matrix = {p : { q : 0 for q in players } for p in players }
-    else:
-        matrix = collections.defaultdict(functools.partial(collections.defaultdict, int))
-
-    for res in results:
-        match = re.match(r'([\w ]+) (\d(?:\.\d)?)–(\d(?:\.\d)?) ([\w ]+)', res)
-        if match is not None:
-            matrix[match.group(4)][match.group(1)] += float(match.group(2))
-            matrix[match.group(1)][match.group(4)] += float(match.group(3))
-
-    return pd.DataFrame.from_records(matrix).fillna(0.).sort_index(axis=0).sort_index(axis=1)
+from img_draw import impl_image
+import file_read
 
 def find_unfinished(resmat, ngames=6):
     remaining = ngames*np.triu(np.ones(resmat.shape), 1) - resmat - resmat.T
@@ -132,54 +118,60 @@ def could_demote(resmat, ngames=6, nplayers=1):
     return players
 
 def match_impl(resmat, playerA, playerB, ngames=6, nplayers=1):
-    im = Image.new("RGB", (512,256), color='white')
-    draw = ImageDraw.Draw(im)
-    tablepos = (20,40)
-    tablesize = (470,200)
-    impl_colors = ['red', 'green', 'blue']
-
     unf = find_player_unfinished(resmat, playerA)
     remaining = unf[playerB] if playerB in unf.index else 0
 
-    tablestep = int(tablesize[1]/(2*remaining+1))
-
     # Gather data about the implications of scenarios
     resultrows = []
-    last_demoters = set()
-    iter_colors = iter(impl_colors)
     for halfwins in range(int(2*remaining+1)):
         spec_resmat = add_record(resmat, playerA, playerB, halfwins/2, remaining - halfwins/2)
         winsA = repr(spec_resmat.loc[playerA, playerB])
         winsB = repr(spec_resmat.loc[playerB, playerA])
         demoters = could_demote(spec_resmat, ngames, nplayers)
-        if set(demoters) != last_demoters:
-            color = next(iter_colors)
-            last_demoters = set(demoters)
-        resultrows.append((winsA, winsB, repr(demoters), color))
+        resultrows.append((winsA, winsB, repr(demoters)))
 
-    # Create image
-    draw.text((200,10), f'{playerA} vs. {playerB}', fill=0, anchor='mt')
-    for row,ypos in zip(resultrows, itertools.count(tablepos[1], tablestep)):
-        draw.line((tablepos[0], ypos, tablepos[0]+tablesize[0], ypos), fill=0)
-        draw.text((tablepos[0]+2, ypos+2), playerA, fill=0)
-        draw.text((tablepos[0]+60, ypos+2), row[0], fill=0)
-        draw.text((tablepos[0]+90, ypos+2), row[1], fill=0)
-        draw.text((tablepos[0]+120, ypos+2), playerB, fill=0)
-        draw.rectangle((tablepos[0]+215, ypos+1, tablepos[0]+tablesize[0], ypos+tablestep-1), fill = row[3])
-        draw.text((tablepos[0]+220, ypos+2), row[2], fill=0)
-    draw.line((tablepos[0], tablepos[1]+(tablestep*len(resultrows)), tablepos[0]+tablesize[0], tablepos[1]+(tablestep*len(resultrows))), fill=0)
+    return playerA, playerB, resultrows
 
-    im.show()
+def impl_text(playerA, playerB, resultrows):
+    for winsA, winsB, demoters in resultrows:
+        print(f'{playerA} {winsA}-{winsB} {playerB} {demoters}')
 
-with open(sys.argv[1]) as rfp:
-    mat = matrix_from_results(rfp)
+s46a1 = """
+Season 46 Division A1
+Match Summary (current)
+Completed matches
+nasmith99 6–0 jonts
+nasmith99 3–3 crabcat2
+nasmith99 4–2 JNails
+nasmith99 5–1 recycle_garbage
+nasmith99 3–3 aku chi
+nasmith99 5–1 tracer
+jonts 4–2 crabcat2
+jonts 2–4 JNails
+jonts 5–1 recycle_garbage
+jonts 5–1 aku chi
+jonts 3–3 tracer
+crabcat2 4–2 JNails
+crabcat2 3–3 recycle_garbage
+crabcat2 4–2 aku chi
+crabcat2 2–4 tracer
+JNails 3–3 recycle_garbage
+JNails 3–3 aku chi
+JNails 4–2 tracer
+recycle_garbage 4–2 tracer
+aku chi 3–3 tracer
+"""
+# Removed match for testing:
+#recycle_garbage 3–3 aku chi
 
-print(mat)
-print(winloss(mat))
+mat = file_read.from_DomBot_matches(s46a1.splitlines())
+
+#print(mat)
+#print(winloss(mat))
 #print(promoting(mat))
 #print(demoting(mat, nplayers=2))
 #print(could_promote(mat, nplayers=1))
 #print(could_demote(mat, nplayers=2))
 
-match_impl(mat, 'aku chi', 'recycle_garbage', nplayers=2)
+impl_image(*match_impl(mat, 'aku chi', 'recycle_garbage', nplayers=2))
 
