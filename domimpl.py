@@ -1,4 +1,3 @@
-import collections
 import itertools
 import functools
 import operator
@@ -69,53 +68,35 @@ def demoting(resmat, ngames=6, nplayers=1):
 
 def could_promote(resmat, ngames=6, nplayers=1):
     # Resolve one match at a time, iteratively
-    unchecked = collections.deque([resmat])
     players = []
 
-    unf = find_unfinished(resmat, ngames).items()
+    for p in resmat.index:
+        spec_resmat = scenario_player_wins_out(resmat, p, ngames)
+        promo = promoting(spec_resmat, ngames, nplayers)
+        players.extend(promo)
 
-    while len(unchecked) > 0:
-        check = unchecked.pop()
-        promo = promoting(check, ngames, nplayers)
-        players.extend(p for p in promo if p not in players)
-
-        # If not all players are known already, check each possible result of the match
         if len(promo) < nplayers:
-            for p, r in unf:
-                scenarios = [add_record(check, *p, hw/2, r-hw/2) for hw in range(int(2*r+1))]
+            for q,r in find_unfinished(spec_resmat, ngames).items():
+                promo = [could_promote(add_record(spec_resmat, *q, hw/2, r-hw/2), ngames, nplayers) for hw in range(int(2*r+1))]
+                players.extend(itertools.chain.from_iterable(promo))
 
-                # skip searching further if this match doesn't change outcomes
-                g = itertools.groupby(promoting(s, ngames, nplayers) for s in scenarios)
-                if next(g, True) and not next(g, False):
-                    unchecked.extend(scenarios)
-                    break
-
-    return players
+    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
 def could_demote(resmat, ngames=6, nplayers=1):
     # Resolve one match at a time, iteratively
-    unchecked = collections.deque([resmat])
     players = []
 
-    unf = find_unfinished(resmat, ngames).items()
+    for p in resmat.index:
+        spec_resmat = scenario_player_loses_out(resmat, p, ngames)
+        demo = demoting(spec_resmat, ngames, nplayers)
+        players.extend(demo)
 
-    while len(unchecked) > 0:
-        check = unchecked.pop()
-        demo = demoting(check, ngames, nplayers)
-        players.extend(d for d in demo if d not in players)
-
-        # If not all players are known already, check each possible result of the match
         if len(demo) < nplayers:
-            for p, r in unf:
-                scenarios = [add_record(check, *p, hw/2, r-hw/2) for hw in range(int(2*r+1))]
+            for q,r in find_unfinished(spec_resmat, ngames).items():
+                demo = [could_demote(add_record(spec_resmat, *q, hw/2, r-hw/2), ngames, nplayers) for hw in range(int(2*r+1))]
+                players.extend(itertools.chain.from_iterable(demo))
 
-                # skip searching further if this match doesn't change outcomes
-                g = itertools.groupby(demoting(s, ngames, nplayers) for s in scenarios)
-                if next(g, True) and not next(g, False):
-                    unchecked.extend(scenarios)
-                    break
-
-    return players
+    return list(map(next, map(operator.itemgetter(1), itertools.groupby(sorted(players)))))
 
 def match_impl(resmat, playerA, playerB, ngames=6, nplayers=1):
     unf = find_player_unfinished(resmat, playerA)
