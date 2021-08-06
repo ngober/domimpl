@@ -25,7 +25,7 @@ def winloss(resmat):
     wins    = resmat.sum(axis=1)
     losses  = resmat.sum(axis=0)
     pcts    = wins / (wins + losses)
-    htoh    = pd.concat([winloss(resmat.loc[pcts == pct, pcts == pct])['win'] for pct in pcts.unique() if pct > 0]) if wins.size > 2 else wins
+    htoh    = pd.concat([winloss(resmat.loc[pcts == pct, pcts == pct])['win'] for pct in pcts.unique() if pct > 0]) if pcts.unique().size > 1 else wins
 
     return pd.DataFrame(data={'name': resmat.index, 'win': wins, 'loss': losses, 'pct': pcts, 'neg_losses': -1*losses, 'htoh': htoh})\
         .sort_values(['pct', 'win', 'neg_losses', 'htoh'], ascending=False)\
