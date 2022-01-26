@@ -1,3 +1,5 @@
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/ngober/domimpl/main.svg)](https://results.pre-commit.ci/latest/github/ngober/domimpl/main)
+
 # domimpl
 Tracking implications of a Dominion League match
 
